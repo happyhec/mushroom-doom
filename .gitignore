@@ -9,3 +9,10 @@ gameplay.png
 mobile-menu.png
 retro-pipeworks.png
 citadel-hd.png
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
