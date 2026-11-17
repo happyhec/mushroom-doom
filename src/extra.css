@@ -1,0 +1,16 @@
+#toast{position:fixed;z-index:30;pointer-events:none;max-width:90vw;width:max-content}
+.modal .modal-banter{border-left:2px solid var(--accent);padding:10px 12px;color:#f6deb7;font-style:italic}
+.setting #voice{width:19px;height:19px;accent-color:var(--accent)}
+.retro-mode #scene canvas{image-rendering:pixelated}
+.retro-mode .vignette{opacity:.45}
+.retro-mode #hud .hud-bottom{bottom:0;left:0;right:0;padding:12px 22px;background:linear-gradient(#474538,#2a2c24);border-top:4px ridge #96957d;box-shadow:0 -3px 0 #0a100b}
+.retro-mode #hud .stat,.retro-mode #hud .ammo-panel{background:#24271f;border:2px inset #999179;border-radius:0}
+.retro-mode #hud .stat-value,.retro-mode #hud .ammo-num{font-family:var(--mono);font-weight:900;text-shadow:2px 2px #090e09}
+.retro-mode #hud .health .stat-value{color:#e89061}
+.retro-mode #hud .hud-hint{bottom:28px}
+.retro-mode #hud .objective{background:#22271eea;border:2px solid #807d5b}
+#banter-line{position:fixed;z-index:8;left:50%;bottom:150px;transform:translateX(-50%);max-width:min(620px,85vw);width:max-content;text-align:center;pointer-events:none;padding:12px 22px;background:linear-gradient(90deg,#0a110300,#0a1107dc 15%,#0a1107dc 85%,#0a110300);text-shadow:0 2px 4px #000}
+.banter-label{display:block;font:9px var(--mono);letter-spacing:2px;color:#edac72;margin-bottom:6px}.banter-text{font-size:17px;color:#f5eed3;font-weight:600;line-height:1.4}
+.campaign-route{display:flex;gap:6px;margin:22px 0}.campaign-stage{flex:1;padding:12px 6px;border:1px solid #95a27733;background:#0d150c;color:#737f66;font:10px var(--mono);text-align:center;line-height:1.5}.campaign-stage.active{border-color:var(--accent);color:#f6dbaf;background:#9b613221}.campaign-stage.complete{color:#b8ce9a;border-color:#91a67188}.campaign-stage strong{font-family:'Barlow Condensed',Impact,sans-serif;font-size:20px;display:block}.briefing-objective{padding:15px;border-left:2px solid var(--accent);background:#c5be9510;color:#d4d8bb;font-size:12px;line-height:1.7}.setting .voice-toggle{width:19px;height:19px;accent-color:var(--accent)}
+@media(max-width:800px){#banter-line{bottom:125px;padding:10px 12px}.banter-text{font-size:13px}.retro-mode #hud .hud-bottom{padding:10px}.retro-mode #hud .stat-value{font-size:26px}.retro-mode #hud .ammo-num{font-size:29px}}
+@media(pointer:coarse){#banter-line{bottom:auto;top:23%;max-width:85vw}}
