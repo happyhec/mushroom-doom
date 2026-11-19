@@ -41,6 +41,7 @@ const ui = createUI({
   onFullscreen: async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); } catch { ui.toast('Fullscreen unavailable in this browser'); } },
   onPause: pauseGame, onMap: () => { mapOpen = !mapOpen; syncUI(); },
   onTouch: (key, down) => { if (key === 'Fire') touchFire = down; else if (key === 'Switch' && down) switchWeapon(1-weaponIndex); else if (key === 'KeyE' && down) interact(); else if (down) keys.add(key); else keys.delete(key); },
+  onTouchLook: (dx, dy) => touchLookBy(dx, dy),
 });
 const banter=new PlumberBanter({onLine:text=>ui.say(text)});
 
@@ -152,7 +153,7 @@ function levelData() {
     kills:player.kills,total:enemies.length,elapsed,secretFound,campaignKills:totals.kills,campaignTotal:totals.enemies,campaignElapsed:totals.elapsed};
 }
 function prepareLevel(index,inventory) {
-  mode='briefing';keys.clear();mouseHeld=false;touchFire=false;banter.reset();ui.clearBanter();audio.setActive(false);
+  mode='briefing';keys.clear();mouseHeld=false;touchFire=false;resetTouch();banter.reset();ui.clearBanter();audio.setActive(false);
   if(document.pointerLockElement)document.exitPointerLock();
   loadWorld(index);entryInventory={...inventory};Object.assign(player,inventory,{x:world.spawn.x,z:world.spawn.z,kills:0,key:false});
   aimYaw=0;aimPitch=0;elapsed=0;zoneIndex=0;secretFound=false;bossIntroduced=false;damageTime=0;shotCooldown=.3;recoil=0;mapOpen=false;
@@ -166,20 +167,24 @@ function beginLevel() {
 function restartLevel() { if(mode==='dead')prepareLevel(levelIndex,entryInventory); }
 function nextLevel() { if(mode==='levelcomplete'&&levelIndex<CAMPAIGN.length-1)prepareLevel(levelIndex+1,nextLevelInventory(player,difficulty)); }
 function requestLock() {
-  if(matchMedia('(pointer:coarse)').matches)return;
+  if(matchMedia('(pointer:coarse)').matches){
+    // Hide browser chrome and keep landscape so both thumbs have room. Unsupported browsers (e.g. iPhone Safari) just skip this.
+    try{const el=document.documentElement;if(!document.fullscreenElement&&el.requestFullscreen)el.requestFullscreen({navigationUI:'hide'}).then(()=>screen.orientation?.lock?.('landscape')).catch(()=>{});}catch{}
+    return;
+  }
   try { const result=renderer.domElement.requestPointerLock(); if(result?.catch)result.catch(()=>notify('DRAG TO AIM · ARROW KEYS TO TURN')); } catch { notify('DRAG TO AIM · ARROW KEYS TO TURN'); }
 }
 function pauseGame() {
   if(mode!=='playing')return;
-  mode='paused';mouseHeld=false;touchFire=false;keys.clear();ui.setMode('paused');audio.setActive(false);banter.stop();ui.clearBanter();
+  mode='paused';mouseHeld=false;touchFire=false;resetTouch();keys.clear();ui.setMode('paused');audio.setActive(false);banter.stop();ui.clearBanter();
   if(document.pointerLockElement)document.exitPointerLock();syncUI();
 }
 function resumeGame() {mode='playing';ui.setMode(mode);audio.setActive(true);shotCooldown=Math.max(shotCooldown,.2);requestLock();syncUI();}
-function returnToMenu() {mode='menu';mouseHeld=false;touchFire=false;keys.clear();audio.setActive(false);banter.stop();ui.clearBanter();if(document.pointerLockElement)document.exitPointerLock();if(levelIndex!==0)loadWorld(0);ui.setMode(mode);syncUI();}
+function returnToMenu() {mode='menu';mouseHeld=false;touchFire=false;resetTouch();keys.clear();audio.setActive(false);banter.stop();ui.clearBanter();if(document.pointerLockElement)document.exitPointerLock();if(levelIndex!==0)loadWorld(0);ui.setMode(mode);syncUI();}
 function finish(win) {
   if(mode!=='playing')return;
   if(win)campaignResults[levelIndex]={kills:player.kills,total:enemies.length,elapsed,secretFound};
-  mode=win?(levelIndex===CAMPAIGN.length-1?'win':'levelcomplete'):'dead';mouseHeld=false;touchFire=false;keys.clear();mapOpen=false;audio.play(win?'win':'death');audio.setActive(false);banter.stop();ui.clearBanter();
+  mode=win?(levelIndex===CAMPAIGN.length-1?'win':'levelcomplete'):'dead';mouseHeld=false;touchFire=false;resetTouch();keys.clear();mapOpen=false;audio.play(win?'win':'death');audio.setActive(false);banter.stop();ui.clearBanter();
   if(document.pointerLockElement)document.exitPointerLock();syncUI();ui.setMode(mode,{...player,...levelData()});
   if(win)banter.play(mode==='win'?'finalWin':'levelClear',{level:levelIndex});
   if(mode==='win')try{const total=campaignTotals(campaignResults).elapsed,best=Number(localStorage.getItem('mushroom-doom-best'));if(!best||total<best)localStorage.setItem('mushroom-doom-best',String(Math.round(total)));}catch{}
@@ -191,8 +196,6 @@ function applySettings(settings) {
   configureRendering();
 }
 function configureRendering() {
-  const ratio=retroMode?1:Math.min(devicePixelRatio,ui.settings.quality==='low'?1:1.5);
-  renderer.setPixelRatio(ratio);composer.setPixelRatio(ratio);
   bloom.enabled=!retroMode&&ui.settings.quality!=='low';renderer.shadowMap.enabled=!retroMode&&ui.settings.quality!=='low';
   retroPass.enabled=retroMode;renderer.domElement.style.imageRendering=retroMode?'pixelated':'auto';
   document.body.classList.toggle('retro-mode',retroMode);
@@ -219,8 +222,15 @@ function toggleRetro() {
   }catch(error){console.error('Retro rendering could not be initialized',error);notify('THE TIME MACHINE NEEDS A TUNE-UP');}
 }
 function resize() {
-  if(!renderer)return;camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();weaponCamera.aspect=camera.aspect;weaponCamera.updateProjectionMatrix();
-  const size=retroMode?retroResolution(innerWidth,innerHeight):{width:innerWidth,height:innerHeight};
+  if(!renderer||!camera||!weaponCamera||!composer)return;
+  const bounds=document.querySelector('#scene').getBoundingClientRect();
+  const width=Math.max(1,Math.round(bounds.width)),height=Math.max(1,Math.round(bounds.height));
+  camera.aspect=width/height;camera.updateProjectionMatrix();weaponCamera.aspect=camera.aspect;weaponCamera.updateProjectionMatrix();
+  // Bound GPU work on dense phone displays and large monitors; HUD text stays native-resolution.
+  const budget=matchMedia('(pointer:coarse)').matches?1500000:4000000;
+  const ratio=retroMode?1:Math.min(devicePixelRatio||1,ui.settings.quality==='low'?1:1.5,Math.sqrt(budget/(width*height)));
+  renderer.setPixelRatio(ratio);composer.setPixelRatio(ratio);
+  const size=retroMode?retroResolution(width,height):{width,height};
   renderer.setSize(size.width,size.height,false);composer.setSize(size.width,size.height);retroPass?.uniforms.resolution.value.set(size.width,size.height);
 }
 function notify(text) {ui.toast(text);activeToastTime=3;}
@@ -339,10 +349,10 @@ function updateEnemies(dt,time) {
 
 function updatePlayer(dt) {
   const turn=(keys.has('ArrowLeft')?1:0)-(keys.has('ArrowRight')?1:0);aimYaw+=turn*dt*2;
-  let forward=(keys.has('KeyW')||keys.has('ArrowUp')?1:0)-(keys.has('KeyS')||keys.has('ArrowDown')?1:0);
-  let side=(keys.has('KeyD')?1:0)-(keys.has('KeyA')?1:0);
-  const length=Math.hypot(forward,side);if(length){forward/=length;side/=length;}
-  const sprint=keys.has('ShiftLeft')||keys.has('ShiftRight');const speed=sprint?11.5:7.5;
+  let forward=(keys.has('KeyW')||keys.has('ArrowUp')?1:0)-(keys.has('KeyS')||keys.has('ArrowDown')?1:0)-stick.y;
+  let side=(keys.has('KeyD')?1:0)-(keys.has('KeyA')?1:0)+stick.x;
+  let length=Math.hypot(forward,side);if(length>1){forward/=length;side/=length;length=1;}
+  const sprint=keys.has('ShiftLeft')||keys.has('ShiftRight')||stick.sprint;const speed=sprint?11.5:7.5;
   const dx=(-Math.sin(aimYaw)*forward+Math.cos(aimYaw)*side)*speed*dt;
   const dz=(-Math.cos(aimYaw)*forward-Math.sin(aimYaw)*side)*speed*dt;
   moveCircle(player,dx,dz,.35,world.colliders);
@@ -351,6 +361,7 @@ function updatePlayer(dt) {
   camera.position.set(player.x,1.65+(length?Math.sin(bob)*.038:Math.sin(bob)*.008),player.z);
   camera.rotation.set(aimPitch,aimYaw,0,'YXZ');
   const targetFov=sprint&&length?85:78;camera.fov+=(targetFov-camera.fov)*Math.min(1,dt*6);camera.updateProjectionMatrix();
+  if(touchFire&&ui.settings.aimAssist)aimAssist(dt);
   if((mouseHeld||touchFire||keys.has('Space'))&&!mapOpen)shoot();
   for(const p of pickups){
     if(p.collected||Math.hypot(p.x-player.x,p.z-player.z)>1.15)continue;
@@ -441,7 +452,16 @@ function frame(timestamp) {
   renderer.info.reset();composer.render();
 }
 
-window.addEventListener('resize',resize);
+function screenChanged(){touchFire=false;resetTouch();resize();}
+window.addEventListener('resize',screenChanged);
+window.visualViewport?.addEventListener('resize',screenChanged);
+screen.orientation?.addEventListener('change',screenChanged);
+matchMedia('(pointer:coarse)').addEventListener('change',screenChanged);
+// Moving between monitors can change pixel density without changing CSS dimensions.
+function watchPixelDensity(){
+  matchMedia('(resolution: '+devicePixelRatio+'dppx)').addEventListener('change',()=>{screenChanged();watchPixelDensity();},{once:true});
+}
+watchPixelDensity();
 document.addEventListener('keydown',e=>{
   if(e.code==='F4'&&!e.altKey&&!e.ctrlKey&&!e.metaKey){e.preventDefault();if(!e.repeat)toggleRetro();return;}
   if(e.target instanceof HTMLInputElement||e.target instanceof HTMLSelectElement)return;
@@ -456,16 +476,64 @@ document.addEventListener('mousemove',e=>{
   if(mode!=='playing'||(!document.pointerLockElement&&!mouseHeld))return;
   aimYaw-=e.movementX*.0022*Number(ui.settings.sensitivity);aimPitch=THREE.MathUtils.clamp(aimPitch-e.movementY*.0022*Number(ui.settings.sensitivity),-1.05,1.05);
 });
-document.addEventListener('mousedown',e=>{if(mode==='playing'&&e.button===0&&e.target===renderer.domElement){mouseHeld=true;if(!document.pointerLockElement)requestLock();}});
+let lastTouchTime=-Infinity;document.addEventListener('touchstart',()=>{lastTouchTime=performance.now();},{passive:true,capture:true});
+document.addEventListener('mousedown',e=>{if(performance.now()-lastTouchTime<1000)return;if(mode==='playing'&&e.button===0&&e.target===renderer.domElement){mouseHeld=true;if(!document.pointerLockElement)requestLock();}});
 document.addEventListener('mouseup',()=>{mouseHeld=false;});
 document.addEventListener('contextmenu',e=>{if(mode==='playing')e.preventDefault();});
 document.addEventListener('pointerlockchange',()=>{const locked=!!document.pointerLockElement;if(wasLocked&&!locked&&mode==='playing')pauseGame();wasLocked=locked;});
 document.addEventListener('visibilitychange',()=>{if(document.hidden)pauseGame();});
-window.addEventListener('blur',()=>{keys.clear();mouseHeld=false;touchFire=false;if(mode==='playing')pauseGame();});
-let touchLook=null;
-document.addEventListener('touchstart',e=>{if(mode!=='playing'||e.target!==renderer.domElement)return;const t=e.changedTouches[0];touchLook={id:t.identifier,x:t.clientX,y:t.clientY};},{passive:true});
-document.addEventListener('touchmove',e=>{if(mode!=='playing'||!touchLook)return;const t=Array.from(e.changedTouches).find(t=>t.identifier===touchLook.id);if(!t)return;e.preventDefault();aimYaw-=(t.clientX-touchLook.x)*.005*Number(ui.settings.sensitivity);aimPitch=THREE.MathUtils.clamp(aimPitch-(t.clientY-touchLook.y)*.005,-1.05,1.05);touchLook.x=t.clientX;touchLook.y=t.clientY;},{passive:false});
-document.addEventListener('touchend',e=>{if(Array.from(e.changedTouches).some(t=>t.identifier===touchLook?.id))touchLook=null;});
+window.addEventListener('blur',()=>{keys.clear();mouseHeld=false;touchFire=false;resetTouch();if(mode==='playing')pauseGame();});
+// Touch controls: a floating analog stick on the left, a look pad on the right (the FIRE button also aims while held).
+const stick={id:null,ox:0,oy:0,x:0,y:0,sprint:false};const STICK_RADIUS=55;const lookTouches=new Map();
+const stickEl=()=>document.getElementById('touch-stick'),knobEl=()=>document.getElementById('touch-knob');
+function touchLookBy(dx,dy){
+  if(mode!=='playing')return;const s=.0055*Number(ui.settings.sensitivity);
+  aimYaw-=dx*s;aimPitch=THREE.MathUtils.clamp(aimPitch-dy*s*.8,-1.05,1.05);
+}
+function drawStick(){
+  const base=stickEl(),knob=knobEl();if(!base||!knob)return;
+  base.classList.toggle('idle',stick.id===null);base.classList.toggle('sprint',stick.sprint);
+  if(stick.id===null){base.style.left=base.style.top='';knob.style.transform='';return;}
+  base.style.left=stick.ox+'px';base.style.top=stick.oy+'px';
+  knob.style.transform=`translate(${stick.x*STICK_RADIUS}px,${stick.y*STICK_RADIUS}px)`;
+}
+function resetTouch(){stick.id=null;stick.x=stick.y=0;stick.sprint=false;lookTouches.clear();drawStick();}
+function setStick(cx,cy){
+  let dx=(cx-stick.ox)/STICK_RADIUS,dy=(cy-stick.oy)/STICK_RADIUS;const m=Math.hypot(dx,dy);
+  // Let the base trail the thumb when it overshoots, so it never feels pinned.
+  if(m>1.35){stick.ox+=dx/m*(m-1.35)*STICK_RADIUS;stick.oy+=dy/m*(m-1.35)*STICK_RADIUS;dx*=1.35/m;dy*=1.35/m;}
+  const mag=Math.min(1,Math.hypot(dx,dy)),dead=.12,scaled=mag<dead?0:(mag-dead)/(1-dead);
+  const len=Math.hypot(dx,dy)||1;stick.x=dx/len*scaled;stick.y=dy/len*scaled;
+  stick.sprint=Math.hypot(dx,dy)>1.15&&stick.y<-.5;drawStick();
+}
+function aimAssist(dt){
+  // Gentle pull toward the nearest visible enemy close to the crosshair. Only active while holding touch FIRE.
+  let best=null,bestDiff=.16;
+  for(const e of enemies){
+    if(e.dead)continue;const ex=e.model.position.x-player.x,ez=e.model.position.z-player.z,dist=Math.hypot(ex,ez);
+    if(dist>32||dist<.5)continue;
+    const diff=Math.atan2(Math.sin(Math.atan2(-ex,-ez)-aimYaw),Math.cos(Math.atan2(-ex,-ez)-aimYaw));
+    if(Math.abs(diff)<bestDiff&&lineClear(player.x,player.z,e.model.position.x,e.model.position.z)){best=diff;bestDiff=Math.abs(diff);}
+  }
+  if(best!==null)aimYaw+=best*Math.min(1,dt*5);
+}
+const canvasTouch=e=>e.pointerType==='touch'&&e.target===renderer?.domElement;
+document.addEventListener('pointerdown',e=>{
+  if(!canvasTouch(e)||mode!=='playing')return;
+  if(e.clientX<innerWidth*.42&&stick.id===null){stick.id=e.pointerId;stick.ox=e.clientX;stick.oy=e.clientY;setStick(e.clientX,e.clientY);}
+  else lookTouches.set(e.pointerId,{x:e.clientX,y:e.clientY});
+});
+document.addEventListener('pointermove',e=>{
+  if(e.pointerType!=='touch'||mode!=='playing')return;
+  if(e.pointerId===stick.id){e.preventDefault();setStick(e.clientX,e.clientY);return;}
+  const look=lookTouches.get(e.pointerId);if(!look)return;e.preventDefault();
+  touchLookBy(e.clientX-look.x,e.clientY-look.y);look.x=e.clientX;look.y=e.clientY;
+},{passive:false});
+for(const type of['pointerup','pointercancel'])document.addEventListener(type,e=>{
+  if(e.pointerType!=='touch')return;
+  if(e.pointerId===stick.id){stick.id=null;stick.x=stick.y=0;stick.sprint=false;drawStick();}
+  lookTouches.delete(e.pointerId);
+});
 
 // A read-only snapshot supports repeatable smoke checks and performance diagnostics.
 window.gameSnapshot=()=>({mode,level:levelIndex+1,levelName:CAMPAIGN[levelIndex].name,levelCount:CAMPAIGN.length,campaignResults:campaignResults.map(r=>({...r})),exit:world?{...world.exit}:null,navigationGates:world?.navigationGates||[],player:{...player},aim:{yaw:aimYaw,pitch:aimPitch},enemies:enemies.map(e=>({type:e.type,x:e.model.position.x,z:e.model.position.z,hp:e.hp,dead:e.dead})),pickups:pickups.map(p=>({type:p.type,x:p.x,z:p.z,collected:p.collected})),elapsed,weapon:weaponIndex,mapOpen,secretFound,graphics:retroMode?'1993':'hd',framebuffer:renderer?{width:renderer.domElement.width,height:renderer.domElement.height}:null,drawCalls:renderer?.info.render.calls,triangles:renderer?.info.render.triangles});
